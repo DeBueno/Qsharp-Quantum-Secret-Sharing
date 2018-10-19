@@ -4,7 +4,8 @@
     open Microsoft.Quantum.Canon;
 	open Microsoft.Quantum.Extensions.Diagnostics;
 	open Microsoft.Quantum.Extensions.Math;
-
+	open Microsoft.Quantum.Extensions.Bitwise;
+	
 	/// # Summary
 	/// Set a Qubit register to the int value given
 	operation SetIntToQb (desired : Int, register : Qubit[]) : ()
@@ -24,19 +25,18 @@
 	}
 	/// # Summary
 	/// Entangle n Qubits
-    operation EntangleRegister (register : Qubit[]) : ()
+    operation GenerateGHZ (register : Qubit[], wordSize : Int) : ()
     {
         body
         {
-			H(register[0]);
-			for(index in 0..Length(register)-2)
+			ApplyToEach(H, register[0..wordSize-1]);
+			for(index in 0..Length(register)-wordSize-1)
 			{
-				CNOT(register[index], register[index+1]);
+				CNOT(register[index], register[wordSize+index]);
 			}
 			
         }
     }
-
 	/// # Summary
 	/// measure an array of Qubits
 	operation MeasureRegister(register : Qubit[]) : (Result[])
@@ -52,24 +52,31 @@
 			return results;
 		}
 	}
-	operation BellState(q0: Qubit, q1: Qubit) : ()
+	operation BellState(q0: Qubit[], q1: Qubit[]) : ()
 	{
 		body
 		{
-			H(q0);
-			CNOT(q0, q1);
+			ApplyToEach(H, q0);
+			for(index in 0..Length(q0)-1)
+			{
+				CNOT(q0[index], q1[index]);
+			}
 		}
-		adjoint auto;
 	}
 	/// # Summary
 	/// Makes a measurement in respect to the Bell basis
-	operation BellStateMeasurement(q0 : Qubit, q1 : Qubit):(Result[])
+	operation BellStateM(q0 : Qubit[], q1 : Qubit[]):(Result[][])
 	{
 		body
 		{
-			(Adjoint BellState)(q0,q1);
-			let measures = MeasureRegister([q0;q1]);
-			return measures;
+			for(index in 0..Length(q0)-1)
+			{
+				CNOT(q0[index], q1[index]);
+			}
+			ApplyToEach(H, q0);
+			let measureQ0 = MeasureRegister(q0);
+			let measureQ1 = MeasureRegister(q1);
+			return [measureQ0; measureQ1];
 		}
 	}
 	/// # Summary
@@ -122,108 +129,163 @@
 			return Return;
 		}
 	}
+	operation Power(bse : Int, e : Int) : (Int)
+	{
+		body
+		{
+			mutable res = 1;
 
-	operation SecretSharing(msg : Int, basis : String) : (Bool)
+			if(e == 0)
+			{
+				return res;
+			}
+			for(index in 1..e)
+			{
+				set res = bse*res;
+			}
+			return res;
+		}
+		
+	}
+	operation rtoi(r : Result[]) : (Int)
+	{
+		body
+		{
+			mutable value = 0;
+			for(index in 0..Length(r)-1)
+			{
+				if(r[index] == One)
+				{
+					set value = value + Power(2, Length(r)-1-index);
+				}
+			}
+			return value;
+		}
+	}
+
+	operation ApplyCaseX(cse : Result[], qbit : Qubit[]) : ()
+	{
+		body
+		{
+			let l = Length(cse);
+			for(index in 0..Length(cse)-1)
+			{
+				if(cse[index] == One)
+				{
+					//Message($"Applied X on index {l-1-index}");
+					X(qbit[index]);
+				}
+			}
+		}
+	}
+
+	operation ApplyCaseZ(cse : Result[], qbit : Qubit[]) : ()
+	{
+		body
+		{
+			let l = Length(cse)-1;
+			for(index in 0..Length(cse)-1)
+			{
+				if(cse[index] == One)
+				{
+					Z(qbit[index]);
+				}
+			}
+		}
+	}
+	operation abs(value : Int) : (Int)
+	{
+		body
+		{
+			mutable res = value;
+			if(value < 0)
+			{
+				set res = res*(-1);
+			}
+			return res;
+		}
+	}
+
+	operation SecretSharing(msg : Int, msgSize : Int, basis : String, direction: String, iterations: Int) : (Bool)
 	{
 		body
 		{
 			mutable success = true;
-			using(register = Qubit[4])
+			using(register = Qubit[msgSize*4])
 			{
 				//guarantee that all qubits are set to |0>
 				SetIntToQb(0, register);
 
-				//giving a name to each Qubit for better reading
-				let MessageToSend = register[3];
-				let Alice = register[2];
-				let Bob = register[1];
-				let Charlie = register[0];
-				//goal: split the message and teleport from Alice to Charlie
-
-				///set the msg to Qubit
-				SetIntToQb(msg, [MessageToSend]);
-
-				///set enconding basis
-				if(basis == "h")
+				Message($"Mesage: {msg}");
+				for(i in 0..iterations-1)
 				{
-					H(MessageToSend);
-					Message("Message enconded in Hadamard basis");
-				}
-				else
-				{
-					Message("Message enconded in Standard basis");
-				}
+					//giving a name to each Qubit for better reading
+					let MessageToSend = register[3*msgSize..4*msgSize-1];
+					let Alice = register[2*msgSize..3*msgSize-1];
+					let Bob = register[msgSize..2*msgSize-1];
+					let Charlie = register[0..msgSize-1];
 
-				///create state |000> + |111>
-				EntangleRegister([Alice; Bob; Charlie]);
-				Message("GHZ state created.");
+					let GHZ = register[0..3*msgSize-1];
+					//goal: split the message and teleport from Alice to Charlie
 
-				///measure in respect to bell state the message qubit and alice GHZ qubit
-				let BellMeasurement = BellStateMeasurement(MessageToSend, Alice);
-				Message($"Alice measurement with results: {BellMeasurement}");
+					///set the msg to Qubit
+					SetIntToQb(msg, MessageToSend);
 
-				///switch to X direction
-				H(Bob);
-				///measure
-				let b = M(Bob);
-				Message($"Bob measurement in X direction with result: [{b}]");
-				
-				///an array of results from alice and bob
-				let results = [BellMeasurement[0]; BellMeasurement[1]; b];
-				
-				if
-				(
-					CompareResults(results, itor(0, 3))		||
-					CompareResults(results, itor(5, 3))	
-				)
-				{
-					///results are either 000 or 101
-					//do nothing
-					//left here for didatic purpose
-				}
-				if
-				(
-					CompareResults(results, itor(1, 3))		||
-					CompareResults(results, itor(4, 3))
-				)
-				{
-					///results are either 001 or 100
-					Z(Charlie);
-				}
-				if
-				(
-					CompareResults(results, itor(2, 3))		||
-					CompareResults(results, itor(7, 3))
-				)
-				{
-					//results are either 010 or 111
-					X(Charlie);
-				}
-				if
-				(
-					CompareResults(results, itor(3, 3))		||
-					CompareResults(results, itor(6, 3))
-				)
-				{
-					///results are either 011 or 110
-					Z(Charlie);
-					X(Charlie);
-				}
+					///set enconding basis
+					if(basis == "H")
+					{
+						ApplyToEach(H, MessageToSend);
+					}
 
-				if(basis == "h")
-				{
-					//if it was enconded in Hadamard basis, this will return to the standard basis
-					H(Charlie);
+					Message($"Generating GHZ State");
+					GenerateGHZ(GHZ, msgSize);
+					Message($"GHZ State generated");
+
+					Message($"Measuring in respect to Bell State (Message and Alice)");
+					let BellMeasurement = BellStateM(MessageToSend, Alice);
+					let iBellMeasurement0 = rtoi(BellMeasurement[0]);
+					let iBellMeasurement1 = rtoi(BellMeasurement[1]);
+					Message($"Bell measure result: {BellMeasurement} {iBellMeasurement0} {iBellMeasurement1}");
+
+					Message("Measuring Bob register");
+					ApplyToEach(H, Bob);
+					if(direction == "Y")
+					{
+						ApplyToEach(S,Bob);
+					}
+					let b = MeasureRegister(Bob);
+					let iB = rtoi(b);
+					Message($"Bob result: {b} {iB}");
+
+					Message("Applying X");
+					ApplyCaseX(BellMeasurement[1], Charlie);
+
+
+					let aXORb = itor(Xor(rtoi(BellMeasurement[0]), rtoi(b)), msgSize);  
+					Message("Applying Z");
+					ApplyCaseZ(aXORb, Charlie);
+
+					Message("Measuring Charlie register");
+					if(basis == "H")
+					{
+						ApplyToEach(H, Charlie);
+					}
+					let res = MeasureRegister(Charlie);
+					let intRes = rtoi(res);
+
+					
+					SetIntToQb(0, register);
+					if(intRes != msg)
+					{
+						Message($"{i} Fault M = {BellMeasurement[0]}, A = {BellMeasurement[1]}, B = {b}, ZControl = {aXORb}");
+						set success = false;
+					}
+					else
+					{
+						Message($"Final Result: {res} {intRes}");
+					}
 				}
-
-				DumpRegister("Charlie.txt", [Charlie]);
-				let c = M(Charlie);
-
-				Message($"Charlie reads: [{c}]");
-				
-				SetIntToQb(0, register);
 			}
-
 			return success;
 		}
 	}
