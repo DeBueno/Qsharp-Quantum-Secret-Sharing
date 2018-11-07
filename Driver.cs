@@ -24,7 +24,7 @@ namespace Quantum.Quantum_Secret_Sharing
 
                 System.Console.WriteLine("Number of iterations: ");
                 int iterations = System.Convert.ToInt32(System.Console.ReadLine());
-                var result = SecretSharing.Run(sim, msg, msgSz, basis.ToString(), bob.ToString(), iterations).Result; ///VERY VERY IMPORTANT THAT YOU GET THE RESULT - OR WILL TRHOW MEMORY ACCESS VIOLATION
+                var result = SecretSharing.Run(sim, msg, msgSz, basis.ToString(), bob.ToString(), iterations).Result;
                 if (!result)
                 {
                     System.Console.WriteLine("Didn't work...");
